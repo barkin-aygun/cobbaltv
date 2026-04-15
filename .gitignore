@@ -1,0 +1,6 @@
+pi/.env
+bot/.env
+pi/photos/
+bot/photos/
+__pycache__/
+*.pyc
