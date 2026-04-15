@@ -31,7 +31,7 @@ logging.getLogger("discord").setLevel(logging.WARNING)
 TOKEN         = os.environ["DISCORD_TOKEN"]
 CHANNEL_ID    = int(os.environ["DISCORD_CHANNEL_ID"])
 R2_PUBLIC_URL = os.environ["R2_PUBLIC_URL"].rstrip("/")
-POLL_INTERVAL = int(os.environ.get("POLL_INTERVAL", 3))
+POLL_INTERVAL = int(os.environ.get("POLL_INTERVAL", 6))
 
 MANIFEST_URL = f"{R2_PUBLIC_URL}/manifest.json"
 
@@ -45,14 +45,12 @@ class Session:
         self.match_info = ""
         self.photos: list[str] = []
         self.message: discord.Message | None = None
-        self.current_index = 0
 
     def reset(self, match_info: str):
         self.active = True
         self.match_info = match_info
         self.photos = []
         self.message = None
-        self.current_index = 0
 
 
 session = Session()
@@ -62,70 +60,27 @@ session = Session()
 # Gallery helpers
 # ---------------------------------------------------------------------------
 def build_embed() -> discord.Embed:
-    idx = session.current_index
-    photo_url = f"{R2_PUBLIC_URL}/{session.photos[idx]}"
+    photo_url = f"{R2_PUBLIC_URL}/{session.photos[-1]}"
     color = discord.Color.red() if session.active else discord.Color.dark_gray()
     embed = discord.Embed(title=session.match_info, color=color)
     embed.set_image(url=photo_url)
-    status = "🔴 LIVE  •  " if session.active else ""
-    embed.set_footer(text=f"{status}Photo {idx + 1} of {len(session.photos)}")
+    status = "🔴 LIVE" if session.active else "⏹ Ended"
+    embed.set_footer(text=f"{status}  •  {len(session.photos)} photos taken")
     return embed
 
 
 async def refresh_gallery() -> None:
     if not session.message or not session.photos:
         return
-    await session.message.edit(embed=build_embed(), view=GalleryView())
-
-
-class GalleryView(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=None)
-        for item in self.children:
-            if isinstance(item, discord.ui.Button):
-                if item.custom_id == "gallery_prev":
-                    item.disabled = session.current_index <= 0
-                elif item.custom_id == "gallery_next":
-                    item.disabled = session.current_index >= len(session.photos) - 1
-
-    @discord.ui.button(label="◀ Prev", style=discord.ButtonStyle.secondary, custom_id="gallery_prev")
-    async def prev_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not session.photos:
-            await interaction.response.send_message(
-                "Session data unavailable — the bot may have restarted.", ephemeral=True
-            )
-            return
-        log.info("Gallery nav: prev (user=%s, %d → %d)", interaction.user, session.current_index, max(0, session.current_index - 1))
-        if session.current_index > 0:
-            session.current_index -= 1
-        await interaction.response.defer()
-        await refresh_gallery()
-
-    @discord.ui.button(label="Next ▶", style=discord.ButtonStyle.secondary, custom_id="gallery_next")
-    async def next_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not session.photos:
-            await interaction.response.send_message(
-                "Session data unavailable — the bot may have restarted.", ephemeral=True
-            )
-            return
-        last = len(session.photos) - 1
-        log.info("Gallery nav: next (user=%s, %d → %d)", interaction.user, session.current_index, min(last, session.current_index + 1))
-        if session.current_index < last:
-            session.current_index += 1
-        await interaction.response.defer()
-        await refresh_gallery()
+    await session.message.edit(embed=build_embed())
 
 
 # ---------------------------------------------------------------------------
 # Manifest poller — no R2 credentials needed, just a public HTTP fetch
 # ---------------------------------------------------------------------------
 async def process_new_photo(key: str) -> None:
-    log.info("New photo: %s (session total: %d)", key, len(session.photos) + 1)
-
-    was_at_latest = not session.photos or session.current_index == len(session.photos) - 1
     session.photos.append(key)
-    if was_at_latest:
-        session.current_index = len(session.photos) - 1
+    log.info("New photo: %s (session total: %d)", key, len(session.photos))
 
     channel = bot.get_channel(CHANNEL_ID)
     if channel is None:
@@ -133,9 +88,9 @@ async def process_new_photo(key: str) -> None:
         return
 
     if session.message is None:
-        log.info("First photo — posting gallery message to channel %d", CHANNEL_ID)
-        session.message = await channel.send(embed=build_embed(), view=GalleryView())
-    elif was_at_latest:
+        log.info("First photo — posting to channel %d", CHANNEL_ID)
+        session.message = await channel.send(embed=build_embed())
+    else:
         await refresh_gallery()
 
 
@@ -188,7 +143,6 @@ tree = app_commands.CommandTree(bot)
 
 @bot.event
 async def on_ready():
-    bot.add_view(GalleryView())
     await tree.sync()
     log.info("Bot ready as %s (guild commands synced)", bot.user)
     asyncio.get_event_loop().create_task(poll_manifest())

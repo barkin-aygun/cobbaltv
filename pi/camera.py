@@ -7,7 +7,10 @@ import threading
 import time
 
 import requests
+from dotenv import load_dotenv
 from PIL import Image, ImageDraw, ImageFont
+
+load_dotenv()
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -34,7 +37,7 @@ except ImportError:
 # Config — set as environment variables on the Pi
 #   R2_ACCOUNT_ID : Cloudflare account ID
 #   R2_API_TOKEN  : Cloudflare API token with R2 read/write permission
-#   R2_BUCKET     : bucket name (e.g. bloodcam)
+#   R2_BUCKET     : bucket name (e.g. cobbaltv)
 # ---------------------------------------------------------------------------
 R2_ACCOUNT_ID = os.environ.get("R2_ACCOUNT_ID")
 R2_API_TOKEN  = os.environ.get("R2_API_TOKEN")
@@ -87,6 +90,12 @@ def r2_get(key: str) -> bytes | None:
     return resp.content
 
 
+def r2_delete(key: str) -> None:
+    resp = requests.delete(_r2_url(key), headers=_auth_headers(), timeout=15)
+    if resp.status_code not in (200, 204, 404):
+        resp.raise_for_status()
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -129,8 +138,11 @@ def make_display_image(ip: str, uploading: bool) -> Image.Image:
     return img
 
 
+MAX_PHOTOS = 100
+
+
 def update_manifest(filename: str) -> None:
-    """Append filename to manifest.json so the bot can discover it without credentials."""
+    """Append filename, enforce rolling window, delete evicted photos from R2."""
     try:
         raw = r2_get("manifest.json")
         manifest: list[str] = json.loads(raw) if raw else []
@@ -139,11 +151,25 @@ def update_manifest(filename: str) -> None:
         return
 
     manifest.append(filename)
+
+    evicted = []
+    if len(manifest) > MAX_PHOTOS:
+        evicted = manifest[:-MAX_PHOTOS]
+        manifest = manifest[-MAX_PHOTOS:]
+
     try:
         r2_put("manifest.json", json.dumps(manifest).encode(), "application/json")
         log.debug("Manifest updated (%d entries)", len(manifest))
     except Exception as e:
         log.error("Manifest PUT failed: %s", e)
+        return
+
+    for key in evicted:
+        try:
+            r2_delete(key)
+            log.debug("Deleted evicted photo: %s", key)
+        except Exception as e:
+            log.warning("Failed to delete %s: %s", key, e)
 
 
 def capture_and_upload(camera) -> None:
