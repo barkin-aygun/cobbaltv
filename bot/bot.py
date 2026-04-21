@@ -31,7 +31,7 @@ logging.getLogger("discord").setLevel(logging.WARNING)
 TOKEN         = os.environ["DISCORD_TOKEN"]
 CHANNEL_ID    = int(os.environ["DISCORD_CHANNEL_ID"])
 R2_PUBLIC_URL = os.environ["R2_PUBLIC_URL"].rstrip("/")
-POLL_INTERVAL = int(os.environ.get("POLL_INTERVAL", 6))
+POLL_INTERVAL = int(os.environ.get("POLL_INTERVAL", 30))
 
 MANIFEST_URL = f"{R2_PUBLIC_URL}/manifest.json"
 
