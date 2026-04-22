@@ -152,7 +152,6 @@ async def on_ready():
 @app_commands.describe(match_info="Match details shown in the gallery header")
 async def cmd_start(interaction: discord.Interaction, match_info: str):
     if session.active:
-        log.warning("/start called by %s but session already active", interaction.user)
         await interaction.response.send_message(
             "A session is already active. Use /stop first.", ephemeral=True
         )

@@ -2,6 +2,8 @@ import io
 import json
 import logging
 import os
+import socket
+import subprocess
 import sys
 import threading
 import time
@@ -510,6 +512,58 @@ def clear_crop():
 
 
 # ---------------------------------------------------------------------------
+# Network info helpers
+# ---------------------------------------------------------------------------
+def _get_network_info() -> tuple[str, str]:
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+    except Exception:
+        ip = "No IP"
+
+    try:
+        ssid = subprocess.check_output(["iwgetid", "-r"], timeout=5).decode().strip()
+        network = ssid if ssid else "AP Mode"
+    except Exception:
+        network = "AP Mode"
+
+    return ip, network
+
+
+def _show_network_on_eink(ip: str, network: str) -> None:
+    _root = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+    libdir  = os.path.join(_root, "python", "lib")
+    fontdir = os.path.join(_root, "python", "pic")
+
+    if libdir not in sys.path:
+        sys.path.insert(0, libdir)
+
+    from TP_lib import epd2in13_V4
+    from PIL import Image, ImageDraw, ImageFont
+
+    epd = epd2in13_V4.EPD()
+    epd.init(epd2in13_V4.EPD.FULL_UPDATE)
+    epd.Clear(0xFF)
+
+    # Landscape: 250 wide × 122 tall
+    image = Image.new("1", (epd.height, epd.width), 255)
+    draw  = ImageDraw.Draw(image)
+
+    font_path = os.path.join(fontdir, "Font.ttc")
+    font_lg = ImageFont.truetype(font_path, 20)
+    font_sm = ImageFont.truetype(font_path, 15)
+
+    draw.text((5, 8),  "bloodcam", font=font_lg, fill=0)
+    draw.text((5, 40), f"IP:  {ip}",      font=font_sm, fill=0)
+    draw.text((5, 65), f"Net: {network}", font=font_sm, fill=0)
+
+    epd.display(epd.getbuffer(image))
+    epd.sleep()
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 def main() -> None:
@@ -521,7 +575,7 @@ def main() -> None:
         log.error("picamera2 not found — must run on a Raspberry Pi.")
         sys.exit(1)
 
-    log.info("Starting bloodcam (interval=%ds, bucket=%s)", INTERVAL, R2_BUCKET or "not set")
+    log.info("Starting bloodcam (interval=%ds, bucket=%s)", interval, R2_BUCKET or "not set")
 
     try:
         cam = Picamera2()
@@ -533,6 +587,14 @@ def main() -> None:
     except Exception as e:
         log.error("Camera init failed: %s", e)
         sys.exit(1)
+
+    try:
+        ip, network = _get_network_info()
+        log.info("Network: ip=%s network=%s", ip, network)
+        _show_network_on_eink(ip, network)
+        log.info("E-ink display updated")
+    except Exception as e:
+        log.warning("E-ink display skipped: %s", e)
 
     log.info("Web UI available at http://0.0.0.0:%d", WEB_PORT)
     app.run(host="0.0.0.0", port=WEB_PORT, threaded=True)
